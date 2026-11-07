@@ -17,6 +17,8 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/events/usb_conn_state_changed.h>
 #include <zmk/event_manager.h>
 #include <zmk/events/battery_state_changed.h>
+#include <zmk/events/activity_state_changed.h>
+#include <zmk/activity.h>
 #include <zmk/split/bluetooth/peripheral.h>
 #include <zmk/events/split_peripheral_status_changed.h>
 #include <zmk/usb.h>
@@ -26,6 +28,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 static sys_slist_t widgets = SYS_SLIST_STATIC_INIT(&widgets);
 static uint32_t frame;
+static lv_timer_t *anim_timer;
 
 static const char *const moon[9] = {"...####..", ".####....", ".###.....", "###......", "###......",
                                     "###......", ".###.....", ".####....", "...####.."};
@@ -121,7 +124,6 @@ static void redraw_all(void) {
     SYS_SLIST_FOR_EACH_CONTAINER(&widgets, widget, node) { draw(widget); }
 }
 
-// ponytail: animates forever like the old animimg did; pause on idle if battery life suffers
 static void tick(lv_timer_t *timer) {
     frame++;
     redraw_all();
@@ -170,6 +172,30 @@ static void output_status_update_cb(struct peripheral_status_state state) {
     redraw_all();
 }
 
+/* Freeze the fire while this half is idle so the display isn't redrawn for nothing. */
+struct activity_status_state {
+    enum zmk_activity_state state;
+};
+
+static void activity_update_cb(struct activity_status_state state) {
+    if (!anim_timer) {
+        return;
+    }
+    if (state.state == ZMK_ACTIVITY_ACTIVE) {
+        lv_timer_resume(anim_timer);
+    } else {
+        lv_timer_pause(anim_timer);
+    }
+}
+
+static struct activity_status_state activity_get_state(const zmk_event_t *eh) {
+    return (struct activity_status_state){.state = zmk_activity_get_state()};
+}
+
+ZMK_DISPLAY_WIDGET_LISTENER(widget_activity_status, struct activity_status_state,
+                            activity_update_cb, activity_get_state)
+ZMK_SUBSCRIPTION(widget_activity_status, zmk_activity_state_changed);
+
 ZMK_DISPLAY_WIDGET_LISTENER(widget_peripheral_status, struct peripheral_status_state,
                             output_status_update_cb, get_state)
 ZMK_SUBSCRIPTION(widget_peripheral_status, zmk_split_peripheral_status_changed);
@@ -179,7 +205,8 @@ int zmk_widget_status_init(struct zmk_widget_status *widget, lv_obj_t *parent) {
     sys_slist_append(&widgets, &widget->node);
     widget_battery_status_init();
     widget_peripheral_status_init();
-    lv_timer_create(tick, CONFIG_CUSTOM_ANIMATION_SPEED / 4, NULL);
+    anim_timer = lv_timer_create(tick, CONFIG_CUSTOM_ANIMATION_SPEED / 4, NULL);
+    widget_activity_status_init();
     return 0;
 }
 
