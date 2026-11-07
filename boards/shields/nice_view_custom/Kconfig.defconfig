@@ -4,7 +4,7 @@
 if SHIELD_NICE_VIEW_CUSTOM
 
 config CUSTOM_ANIMATION_SPEED
-    int "Duration in milliseconds of the right-half slime's 4-frame loop"
+    int "Duration in milliseconds of the right-half cat's 4-frame loop"
     default 1280
 
 config LS0XX_VCOM_THREAD_PRIO
