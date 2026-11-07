@@ -1,12 +1,14 @@
 /*
  *
- * Copyright (c) 2023 The ZMK Contributors
+ * Copyright (c) 2025 The ZMK Contributors
  * SPDX-License-Identifier: MIT
  *
+ * Right (peripheral) HUD: 2P badge, link state, own HP, and a slime that
+ * idles while linked and sleeps when the link drops.
  */
 
+#include <stdio.h>
 #include <zephyr/kernel.h>
-#include <zephyr/random/random.h>
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
@@ -21,78 +23,125 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/usb.h>
 #include <zmk/ble.h>
 
-#include "peripheral_status.h"
-
-LV_IMG_DECLARE(corro01);
-LV_IMG_DECLARE(corro02);
-LV_IMG_DECLARE(corro03);
-LV_IMG_DECLARE(corro04);
-LV_IMG_DECLARE(corro05);
-LV_IMG_DECLARE(corro06);
-LV_IMG_DECLARE(corro07);
-LV_IMG_DECLARE(corro08);
-LV_IMG_DECLARE(corro09);
-LV_IMG_DECLARE(corro10);
-LV_IMG_DECLARE(corro11);
-LV_IMG_DECLARE(corro12);
-
-static const void *anim_imgs[] = {
-    &corro01,
-    &corro02,
-    &corro03,
-    &corro04,
-    &corro05,
-    &corro06,
-    &corro07,
-    &corro08,
-    &corro09,
-    &corro10,
-    &corro11,
-    &corro12,
-};
+#include "status.h"
 
 static sys_slist_t widgets = SYS_SLIST_STATIC_INIT(&widgets);
+static uint32_t frame;
 
-struct peripheral_status_state {
-    bool connected;
+static const char *const moon[9] = {"...####..", ".####....", ".###.....", "###......", "###......",
+                                    "###......", ".###.....", ".####....", "...####.."};
+static const char *const slime[12] = {
+    "......####......", "....########....", "...##..######...", "..###.########..",
+    "..############..", "..###..##..###..", ".####..##..####.", ".##############.",
+    ".######..######.", "################", "################", ".##############.",
 };
+static const char *const squash[9] = {
+    "....########....", "..##..########..", ".###.##########.", ".####..##..####.",
+    "################", "#######..#######", "################", "################",
+    ".##############.",
+};
+static const char *const sleeping[12] = {
+    "......####......", "....########....", "...##..######...", "..###.########..",
+    "..############..", "..############..", ".##...####...##.", ".##############.",
+    ".##############.", "################", "################", ".##############.",
+};
+static const uint8_t stars[][2] = {{6, 31},  {14, 47}, {31, 35}, {58, 58}, {8, 74},   {40, 50},
+                                   {24, 88}, {62, 92}, {47, 78}, {36, 66}, {12, 104}, {55, 112}};
 
-static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_state *state) {
-    lv_obj_t *canvas = lv_obj_get_child(widget, 0);
+static void draw(struct zmk_widget_status *widget) {
+    const struct status_state *s = &widget->state;
+    struct hud h;
+    char t[4];
+    hud_begin(&h, widget);
 
-    lv_draw_label_dsc_t label_dsc;
-    init_label_dsc(&label_dsc, LVGL_FOREGROUND, &lv_font_montserrat_16, LV_TEXT_ALIGN_RIGHT);
-    lv_draw_rect_dsc_t rect_black_dsc;
-    init_rect_dsc(&rect_black_dsc, LVGL_BACKGROUND);
+    // header band: player badge + link
+    hud_rect(&h, 0, 0, HUD_W, 11, true);
+    hud_rect(&h, 2, 2, 13, 7, false);
+    hud_text(&h, "2P", 3, 3, 1, true);
+    if (s->connected || frame % 2) {
+        hud_text(&h, s->connected ? "LINK" : "LOST", 66 - hud_text_w("LINK", 1), 3, 1, false);
+    }
 
-    // Fill background
-    canvas_draw_rect(canvas, 0, 0, CANVAS_SIZE, CANVAS_SIZE, &rect_black_dsc);
+    // HP row
+    hud_text(&h, "HP", 2, 15, 1, true);
+    hud_hearts(&h, 10, 14, s->battery);
+    if (s->charging) {
+        hud_sprite(&h, hud_bolt, 7, 51, 13, 1, true, false);
+    }
+    snprintf(t, sizeof(t), "%d", s->battery);
+    hud_text(&h, t, 66 - hud_text_w(t, 1), 15, 1, true);
+    for (int x = 0; x < HUD_W; x += 2) {
+        hud_px(&h, x, 24, true);
+    }
 
-    // Draw battery
-    draw_battery(canvas, state);
+    // night sky
+    hud_sprite(&h, moon, 9, 50, 32, 1, true, false);
+    for (int i = 0; i < ARRAY_SIZE(stars); i++) {
+        int x = stars[i][0], y = stars[i][1];
+        hud_px(&h, x, y, true);
+        if ((i + frame) % 5 == 0) {
+            hud_px(&h, x - 1, y, true);
+            hud_px(&h, x + 1, y, true);
+            hud_px(&h, x, y - 1, true);
+            hud_px(&h, x, y + 1, true);
+        }
+    }
 
-    // Draw output status
-    canvas_draw_text(canvas, 0, 0, CANVAS_SIZE, &label_dsc,
-                     state->connected ? LV_SYMBOL_WIFI : LV_SYMBOL_CLOSE);
+    // ground
+    hud_rect(&h, 0, 136, HUD_W, 1, true);
+    static const uint8_t tufts[] = {4, 26, 44, 60};
+    for (int i = 0; i < ARRAY_SIZE(tufts); i++) {
+        hud_px(&h, tufts[i], 135, true);
+        hud_px(&h, tufts[i] + 1, 134, true);
+        hud_px(&h, tufts[i] + 2, 135, true);
+    }
+    hud_dither(&h, 138);
 
-    // Rotate canvas
-    rotate_canvas(canvas);
+    // slime
+    if (s->connected) {
+        switch (frame % 4) {
+        case 1:
+            hud_sprite(&h, squash, 9, 18, 136 - 18, 2, true, false);
+            break;
+        case 3:
+            hud_sprite(&h, slime, 12, 18, 136 - 24 - 6, 2, true, false);
+            hud_rect(&h, 24, 137, 20, 1, false);
+            break;
+        default:
+            hud_sprite(&h, slime, 12, 18, 136 - 24, 2, true, false);
+        }
+    } else {
+        int z = frame % 3;
+        hud_sprite(&h, sleeping, 12, 18, 112, 2, true, false);
+        hud_text(&h, "Z", 44, 104 - z * 4, 1, true);
+        if (z > 0) {
+            hud_text(&h, "Z", 50, 96 - z * 4, 2, true);
+        }
+    }
+
+    hud_end(&h);
 }
 
-static void set_battery_status(struct zmk_widget_status *widget,
-                               struct battery_status_state state) {
-#if IS_ENABLED(CONFIG_USB_DEVICE_STACK)
-    widget->state.charging = state.usb_present;
-#endif /* IS_ENABLED(CONFIG_USB_DEVICE_STACK) */
+static void redraw_all(void) {
+    struct zmk_widget_status *widget;
+    SYS_SLIST_FOR_EACH_CONTAINER(&widgets, widget, node) { draw(widget); }
+}
 
-    widget->state.battery = state.level;
-
-    draw_top(widget->obj, widget->cbuf, &widget->state);
+// ponytail: animates forever like the old animimg did; pause on idle if battery life suffers
+static void tick(lv_timer_t *timer) {
+    frame++;
+    redraw_all();
 }
 
 static void battery_status_update_cb(struct battery_status_state state) {
     struct zmk_widget_status *widget;
-    SYS_SLIST_FOR_EACH_CONTAINER(&widgets, widget, node) { set_battery_status(widget, state); }
+    SYS_SLIST_FOR_EACH_CONTAINER(&widgets, widget, node) {
+#if IS_ENABLED(CONFIG_USB_DEVICE_STACK)
+        widget->state.charging = state.usb_present;
+#endif
+        widget->state.battery = state.level;
+    }
+    redraw_all();
 }
 
 static struct battery_status_state battery_status_get_state(const zmk_event_t *eh) {
@@ -100,32 +149,31 @@ static struct battery_status_state battery_status_get_state(const zmk_event_t *e
         .level = zmk_battery_state_of_charge(),
 #if IS_ENABLED(CONFIG_USB_DEVICE_STACK)
         .usb_present = zmk_usb_is_powered(),
-#endif /* IS_ENABLED(CONFIG_USB_DEVICE_STACK) */
+#endif
     };
 }
 
 ZMK_DISPLAY_WIDGET_LISTENER(widget_battery_status, struct battery_status_state,
                             battery_status_update_cb, battery_status_get_state)
-
 ZMK_SUBSCRIPTION(widget_battery_status, zmk_battery_state_changed);
 #if IS_ENABLED(CONFIG_USB_DEVICE_STACK)
 ZMK_SUBSCRIPTION(widget_battery_status, zmk_usb_conn_state_changed);
-#endif /* IS_ENABLED(CONFIG_USB_DEVICE_STACK) */
+#endif
+
+struct peripheral_status_state {
+    bool connected;
+};
 
 static struct peripheral_status_state get_state(const zmk_event_t *_eh) {
     return (struct peripheral_status_state){.connected = zmk_split_bt_peripheral_is_connected()};
 }
 
-static void set_connection_status(struct zmk_widget_status *widget,
-                                  struct peripheral_status_state state) {
-    widget->state.connected = state.connected;
-
-    draw_top(widget->obj, widget->cbuf, &widget->state);
-}
-
 static void output_status_update_cb(struct peripheral_status_state state) {
     struct zmk_widget_status *widget;
-    SYS_SLIST_FOR_EACH_CONTAINER(&widgets, widget, node) { set_connection_status(widget, state); }
+    SYS_SLIST_FOR_EACH_CONTAINER(&widgets, widget, node) {
+        widget->state.connected = state.connected;
+    }
+    redraw_all();
 }
 
 ZMK_DISPLAY_WIDGET_LISTENER(widget_peripheral_status, struct peripheral_status_state,
@@ -133,23 +181,11 @@ ZMK_DISPLAY_WIDGET_LISTENER(widget_peripheral_status, struct peripheral_status_s
 ZMK_SUBSCRIPTION(widget_peripheral_status, zmk_split_peripheral_status_changed);
 
 int zmk_widget_status_init(struct zmk_widget_status *widget, lv_obj_t *parent) {
-    widget->obj = lv_obj_create(parent);
-    lv_obj_set_size(widget->obj, 160, 68);
-    lv_obj_t *top = lv_canvas_create(widget->obj);
-    lv_obj_align(top, LV_ALIGN_TOP_RIGHT, 0, 0);
-    lv_canvas_set_buffer(top, widget->cbuf, CANVAS_SIZE, CANVAS_SIZE, CANVAS_COLOR_FORMAT);
-
-    lv_obj_t *art = lv_animimg_create(widget->obj);
-    lv_animimg_set_src(art, anim_imgs, ARRAY_SIZE(anim_imgs));
-    lv_animimg_set_duration(art, CONFIG_CUSTOM_ANIMATION_SPEED);
-    lv_animimg_set_repeat_count(art, LV_ANIM_REPEAT_INFINITE);
-    lv_animimg_start(art);
-    lv_obj_align(art, LV_ALIGN_TOP_LEFT, 0, 0);
-
+    hud_create(widget, parent);
     sys_slist_append(&widgets, &widget->node);
     widget_battery_status_init();
     widget_peripheral_status_init();
-
+    lv_timer_create(tick, CONFIG_CUSTOM_ANIMATION_SPEED / 4, NULL);
     return 0;
 }
 

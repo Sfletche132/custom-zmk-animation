@@ -5,126 +5,134 @@
  *
  */
 
+#include <ctype.h>
+#include <string.h>
 #include <zephyr/kernel.h>
 #include "util.h"
 
-LV_IMG_DECLARE(bolt);
+#define INK (IS_ENABLED(CONFIG_NICE_VIEW_WIDGET_INVERTED) ? 0xFF : 0x00)
+#define PAPER (IS_ENABLED(CONFIG_NICE_VIEW_WIDGET_INVERTED) ? 0x00 : 0xFF)
 
-void rotate_canvas(lv_obj_t *canvas) {
-    uint8_t *buf = lv_canvas_get_draw_buf(canvas)->data;
-    static uint8_t buf_copy[CANVAS_BUF_SIZE];
-    memcpy(buf_copy, buf, sizeof(buf_copy));
+/* 3x5 pixel font, rows separated by spaces. */
+static const char *const font[128] = {
+    ['A'] = ".#. #.# ### #.# #.#", ['B'] = "##. #.# ##. #.# ##.", ['C'] = ".## #.. #.. #.. .##",
+    ['D'] = "##. #.# #.# #.# ##.", ['E'] = "### #.. ##. #.. ###", ['F'] = "### #.. ##. #.. #..",
+    ['G'] = ".## #.. #.# #.# .##", ['H'] = "#.# #.# ### #.# #.#", ['I'] = "### .#. .#. .#. ###",
+    ['J'] = "..# ..# ..# #.# .#.", ['K'] = "#.# #.# ##. #.# #.#", ['L'] = "#.. #.. #.. #.. ###",
+    ['M'] = "#.# ### ### #.# #.#", ['N'] = "##. #.# #.# #.# #.#", ['O'] = ".#. #.# #.# #.# .#.",
+    ['P'] = "##. #.# ##. #.. #..", ['Q'] = ".#. #.# #.# ##. .##", ['R'] = "##. #.# ##. #.# #.#",
+    ['S'] = ".## #.. .#. ..# ##.", ['T'] = "### .#. .#. .#. .#.", ['U'] = "#.# #.# #.# #.# ###",
+    ['V'] = "#.# #.# #.# #.# .#.", ['W'] = "#.# #.# ### ### #.#", ['X'] = "#.# #.# .#. #.# #.#",
+    ['Y'] = "#.# #.# .#. .#. .#.", ['Z'] = "### ..# .#. #.. ###", ['0'] = "### #.# #.# #.# ###",
+    ['1'] = ".#. ##. .#. .#. ###", ['2'] = "##. ..# .#. #.. ###", ['3'] = "##. ..# .#. ..# ##.",
+    ['4'] = "#.# #.# ### ..# ..#", ['5'] = "### #.. ##. ..# ##.", ['6'] = ".## #.. ### #.# ###",
+    ['7'] = "### ..# .#. .#. .#.", ['8'] = "### #.# ### #.# ###", ['9'] = "### #.# ### ..# ##.",
+    ['%'] = "#.# ..# .#. #.. #.#", ['-'] = "... ... ### ... ...", ['?'] = "##. ..# .#. ... .#.",
+    ['+'] = "... .#. ### .#. ...",
+};
 
-    const uint32_t stride = lv_draw_buf_width_to_stride(CANVAS_SIZE, CANVAS_COLOR_FORMAT);
-    lv_draw_sw_rotate(buf_copy, buf, CANVAS_SIZE, CANVAS_SIZE, stride, stride,
-                      LV_DISPLAY_ROTATION_270, CANVAS_COLOR_FORMAT);
+static const char *const heart[6] = {".##.##.", "#######", "#######",
+                                     ".#####.", "..###..", "...#..."};
+static const char *const heart_empty[6] = {".##.##.", "#..#..#", "#.....#",
+                                           ".#...#.", "..#.#..", "...#..."};
+const char *const hud_bolt[7] = {"...##", "..##.", ".##..", "#####", "..##.", ".##..", "##..."};
+
+void hud_create(struct zmk_widget_status *widget, lv_obj_t *parent) {
+    widget->obj = lv_canvas_create(parent);
+    lv_canvas_set_buffer(widget->obj, widget->cbuf, HUD_H, HUD_W, HUD_COLOR_FORMAT);
 }
 
-void draw_battery(lv_obj_t *canvas, const struct status_state *state) {
-    lv_draw_rect_dsc_t rect_black_dsc;
-    init_rect_dsc(&rect_black_dsc, LVGL_BACKGROUND);
-    lv_draw_rect_dsc_t rect_white_dsc;
-    init_rect_dsc(&rect_white_dsc, LVGL_FOREGROUND);
+void hud_begin(struct hud *h, struct zmk_widget_status *widget) {
+    lv_draw_buf_t *db = lv_canvas_get_draw_buf(widget->obj);
+    h->canvas = widget->obj;
+    h->buf = db->data;
+    h->stride = db->header.stride;
+    memset(h->buf, PAPER, h->stride * HUD_W);
+}
 
-    canvas_draw_rect(canvas, 0, 2, 29, 12, &rect_white_dsc);
-    canvas_draw_rect(canvas, 1, 3, 27, 10, &rect_black_dsc);
-    canvas_draw_rect(canvas, 2, 4, (state->battery + 2) / 4, 8, &rect_white_dsc);
-    canvas_draw_rect(canvas, 30, 5, 3, 6, &rect_white_dsc);
-    canvas_draw_rect(canvas, 31, 6, 1, 4, &rect_black_dsc);
+void hud_end(struct hud *h) { lv_obj_invalidate(h->canvas); }
 
-    if (state->charging) {
-        lv_draw_image_dsc_t img_dsc;
-        lv_draw_image_dsc_init(&img_dsc);
-        canvas_draw_img(canvas, 9, -1, &bolt, &img_dsc);
+/* Portrait (x, y) -> landscape (HUD_H - 1 - y, x): portrait top sits at the panel's right edge,
+ * matching the stock widget's LV_DISPLAY_ROTATION_270 canvases. */
+void hud_px(struct hud *h, int x, int y, bool ink) {
+    if (x < 0 || x >= HUD_W || y < 0 || y >= HUD_H) {
+        return;
+    }
+    h->buf[x * h->stride + (HUD_H - 1 - y)] = ink ? INK : PAPER;
+}
+
+void hud_rect(struct hud *h, int x, int y, int w, int h_, bool ink) {
+    for (int j = 0; j < h_; j++) {
+        for (int i = 0; i < w; i++) {
+            hud_px(h, x + i, y + j, ink);
+        }
     }
 }
 
-void init_label_dsc(lv_draw_label_dsc_t *label_dsc, lv_color_t color, const lv_font_t *font,
-                    lv_text_align_t align) {
-    lv_draw_label_dsc_init(label_dsc);
-    label_dsc->color = color;
-    label_dsc->font = font;
-    label_dsc->align = align;
+void hud_box(struct hud *h, int x, int y, int w, int h_, bool ink) {
+    hud_rect(h, x, y, w, 1, ink);
+    hud_rect(h, x, y + h_ - 1, w, 1, ink);
+    hud_rect(h, x, y, 1, h_, ink);
+    hud_rect(h, x + w - 1, y, 1, h_, ink);
 }
 
-void init_rect_dsc(lv_draw_rect_dsc_t *rect_dsc, lv_color_t bg_color) {
-    lv_draw_rect_dsc_init(rect_dsc);
-    rect_dsc->bg_color = bg_color;
-}
-
-void init_line_dsc(lv_draw_line_dsc_t *line_dsc, lv_color_t color, uint8_t width) {
-    lv_draw_line_dsc_init(line_dsc);
-    line_dsc->color = color;
-    line_dsc->width = width;
-}
-
-void init_arc_dsc(lv_draw_arc_dsc_t *arc_dsc, lv_color_t color, uint8_t width) {
-    lv_draw_arc_dsc_init(arc_dsc);
-    arc_dsc->color = color;
-    arc_dsc->width = width;
-}
-
-void canvas_draw_line(lv_obj_t *canvas, const lv_point_t points[], uint32_t point_cnt,
-                      lv_draw_line_dsc_t *draw_dsc) {
-    lv_layer_t layer;
-    lv_canvas_init_layer(canvas, &layer);
-
-    for (uint32_t i = 1; i < point_cnt; ++i) {
-        draw_dsc->p1.x = points[i - 1].x;
-        draw_dsc->p1.y = points[i - 1].y;
-        draw_dsc->p2.x = points[i].x;
-        draw_dsc->p2.y = points[i].y;
-        lv_draw_line(&layer, draw_dsc);
+void hud_sprite(struct hud *h, const char *const rows[], int nrows, int x, int y, int scale,
+                bool ink, bool flip) {
+    for (int j = 0; j < nrows; j++) {
+        int jj = flip ? nrows - 1 - j : j;
+        for (int i = 0; rows[j][i]; i++) {
+            if (rows[j][i] == '#') {
+                hud_rect(h, x + i * scale, y + jj * scale, scale, scale, ink);
+            }
+        }
     }
-
-    lv_canvas_finish_layer(canvas, &layer);
-}
-void canvas_draw_rect(lv_obj_t *canvas, lv_coord_t x, lv_coord_t y, lv_coord_t w, lv_coord_t h,
-                      lv_draw_rect_dsc_t *draw_dsc) {
-    lv_layer_t layer;
-    lv_canvas_init_layer(canvas, &layer);
-
-    lv_area_t coords = {x, y, x + w - 1, y + h - 1};
-    lv_draw_rect(&layer, draw_dsc, &coords);
-
-    lv_canvas_finish_layer(canvas, &layer);
 }
 
-void canvas_draw_arc(lv_obj_t *canvas, lv_coord_t x, lv_coord_t y, lv_coord_t r,
-                     int32_t start_angle, int32_t end_angle, lv_draw_arc_dsc_t *draw_dsc) {
-    lv_layer_t layer;
-    lv_canvas_init_layer(canvas, &layer);
-
-    draw_dsc->center.x = x;
-    draw_dsc->center.y = y;
-    draw_dsc->radius = r;
-    draw_dsc->start_angle = start_angle;
-    draw_dsc->end_angle = end_angle;
-    lv_draw_arc(&layer, draw_dsc);
-
-    lv_canvas_finish_layer(canvas, &layer);
+int hud_text_w(const char *t, int scale) {
+    int n = strlen(t);
+    return n ? (n * 4 - 1) * scale : 0;
 }
 
-void canvas_draw_text(lv_obj_t *canvas, lv_coord_t x, lv_coord_t y, lv_coord_t max_w,
-                      lv_draw_label_dsc_t *draw_dsc, const char *txt) {
-    lv_layer_t layer;
-    lv_canvas_init_layer(canvas, &layer);
-
-    draw_dsc->text = txt;
-    lv_area_t coords = {x, y, x + max_w, y + CANVAS_SIZE};
-    lv_draw_label(&layer, draw_dsc, &coords);
-
-    lv_canvas_finish_layer(canvas, &layer);
+void hud_text(struct hud *h, const char *t, int x, int y, int scale, bool ink) {
+    for (; *t; t++, x += 4 * scale) {
+        unsigned char c = toupper((unsigned char)*t);
+        const char *g = c < 128 ? font[c] : NULL;
+        if (!g) {
+            continue;
+        }
+        for (int r = 0; r < 5; r++) {
+            for (int col = 0; col < 3; col++) {
+                if (g[r * 4 + col] == '#') {
+                    hud_rect(h, x + col * scale, y + r * scale, scale, scale, ink);
+                }
+            }
+        }
+    }
 }
 
-void canvas_draw_img(lv_obj_t *canvas, lv_coord_t x, lv_coord_t y, const lv_image_dsc_t *src,
-                     lv_draw_image_dsc_t *draw_dsc) {
-    lv_layer_t layer;
-    lv_canvas_init_layer(canvas, &layer);
+/* Five hearts, 20% each, half hearts in between. */
+void hud_hearts(struct hud *h, int x, int y, int pct) {
+    for (int k = 0; k < 5; k++) {
+        int f = CLAMP((pct - k * 20 + 5) / 10, 0, 2);
+        for (int r = 0; r < 6; r++) {
+            for (int c = 0; c < 7; c++) {
+                char on = f == 2   ? heart[r][c]
+                          : f == 1 ? (c <= 3 ? heart[r][c] : heart_empty[r][c])
+                                   : heart_empty[r][c];
+                if (on == '#') {
+                    hud_px(h, x + k * 8 + c, y + r, true);
+                }
+            }
+        }
+    }
+}
 
-    draw_dsc->src = src;
-    lv_area_t coords = {x, y, x + src->header.w - 1, y + src->header.h - 1};
-    lv_draw_image(&layer, draw_dsc, &coords);
-
-    lv_canvas_finish_layer(canvas, &layer);
+void hud_dither(struct hud *h, int y0) {
+    for (int y = y0; y < HUD_H; y++) {
+        for (int x = 0; x < HUD_W; x++) {
+            if ((x + y) % 4 == 0 && y % 2 == 0) {
+                hud_px(h, x, y, true);
+            }
+        }
+    }
 }

@@ -5,26 +5,24 @@
  *
  */
 
+#pragma once
+
 #include <lvgl.h>
 #include <zmk/endpoints.h>
 
 #define NICEVIEW_PROFILE_COUNT 5
 
-#define CANVAS_SIZE 68
-#define CANVAS_COLOR_FORMAT LV_COLOR_FORMAT_L8 // smallest type supported by sw_rotate
-#define CANVAS_BUF_SIZE                                                                            \
-    LV_CANVAS_BUF_SIZE(CANVAS_SIZE, CANVAS_SIZE, LV_COLOR_FORMAT_GET_BPP(CANVAS_COLOR_FORMAT),     \
-                       LV_DRAW_BUF_STRIDE_ALIGN)
-
-#define LVGL_BACKGROUND                                                                            \
-    IS_ENABLED(CONFIG_NICE_VIEW_WIDGET_INVERTED) ? lv_color_black() : lv_color_white()
-#define LVGL_FOREGROUND                                                                            \
-    IS_ENABLED(CONFIG_NICE_VIEW_WIDGET_INVERTED) ? lv_color_white() : lv_color_black()
+/* The HUD is drawn in portrait: 68 wide, 160 tall (the panel is 160x68 landscape). */
+#define HUD_W 68
+#define HUD_H 160
+#define HUD_COLOR_FORMAT LV_COLOR_FORMAT_L8
+#define HUD_BUF_SIZE LV_CANVAS_BUF_SIZE(HUD_H, HUD_W, 8, LV_DRAW_BUF_STRIDE_ALIGN)
 
 struct status_state {
     uint8_t battery;
     bool charging;
 #if !IS_ENABLED(CONFIG_ZMK_SPLIT) || IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
+    uint8_t peripheral_battery;
     struct zmk_endpoint_instance selected_endpoint;
     int active_profile_index;
     bool active_profile_connected;
@@ -33,7 +31,6 @@ struct status_state {
     bool profiles_bonded[NICEVIEW_PROFILE_COUNT];
     uint8_t layer_index;
     const char *layer_label;
-    uint8_t wpm[10];
 #else
     bool connected;
 #endif
@@ -46,21 +43,37 @@ struct battery_status_state {
 #endif
 };
 
-void rotate_canvas(lv_obj_t *canvas);
-void draw_battery(lv_obj_t *canvas, const struct status_state *state);
-void init_label_dsc(lv_draw_label_dsc_t *label_dsc, lv_color_t color, const lv_font_t *font,
-                    lv_text_align_t align);
-void init_rect_dsc(lv_draw_rect_dsc_t *rect_dsc, lv_color_t bg_color);
-void init_line_dsc(lv_draw_line_dsc_t *line_dsc, lv_color_t color, uint8_t width);
-void init_arc_dsc(lv_draw_arc_dsc_t *arc_dsc, lv_color_t color, uint8_t width);
+struct zmk_widget_status {
+    sys_snode_t node;
+    lv_obj_t *obj;
+    uint8_t cbuf[HUD_BUF_SIZE] __aligned(LV_DRAW_BUF_ALIGN);
+    struct status_state state;
+};
 
-void canvas_draw_line(lv_obj_t *canvas, const lv_point_t points[], uint32_t point_cnt,
-                      lv_draw_line_dsc_t *draw_dsc);
-void canvas_draw_rect(lv_obj_t *canvas, lv_coord_t x, lv_coord_t y, lv_coord_t w, lv_coord_t h,
-                      lv_draw_rect_dsc_t *draw_dsc);
-void canvas_draw_arc(lv_obj_t *canvas, lv_coord_t x, lv_coord_t y, lv_coord_t r,
-                     int32_t start_angle, int32_t end_angle, lv_draw_arc_dsc_t *draw_dsc);
-void canvas_draw_text(lv_obj_t *canvas, lv_coord_t x, lv_coord_t y, lv_coord_t max_w,
-                      lv_draw_label_dsc_t *draw_dsc, const char *txt);
-void canvas_draw_img(lv_obj_t *canvas, lv_coord_t x, lv_coord_t y, const lv_image_dsc_t *src,
-                     lv_draw_image_dsc_t *draw_dsc);
+int zmk_widget_status_init(struct zmk_widget_status *widget, lv_obj_t *parent);
+lv_obj_t *zmk_widget_status_obj(struct zmk_widget_status *widget);
+
+/*
+ * Pixel HUD primitives. Coordinates are portrait; sprites are arrays of
+ * strings where '#' is an ink pixel - the same bitmaps as the design mockup.
+ */
+struct hud {
+    lv_obj_t *canvas;
+    uint8_t *buf;
+    uint32_t stride;
+};
+
+void hud_create(struct zmk_widget_status *widget, lv_obj_t *parent);
+void hud_begin(struct hud *h, struct zmk_widget_status *widget);
+void hud_end(struct hud *h);
+void hud_px(struct hud *h, int x, int y, bool ink);
+void hud_rect(struct hud *h, int x, int y, int w, int h_, bool ink);
+void hud_box(struct hud *h, int x, int y, int w, int h_, bool ink);
+void hud_sprite(struct hud *h, const char *const rows[], int nrows, int x, int y, int scale,
+                bool ink, bool flip);
+int hud_text_w(const char *t, int scale);
+void hud_text(struct hud *h, const char *t, int x, int y, int scale, bool ink);
+void hud_hearts(struct hud *h, int x, int y, int pct);
+void hud_dither(struct hud *h, int y0);
+
+extern const char *const hud_bolt[7];
