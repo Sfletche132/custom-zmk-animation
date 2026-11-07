@@ -32,8 +32,6 @@ static const char *const font[128] = {
     ['+'] = "... .#. ### .#. ...",
 };
 
-static const char *const flask[9] = {"..###..", "..###..", "...#...", "..###..", ".#####.",
-                                     "#######", "#######", "#######", ".#####."};
 static const char *const flame[7] = {"..#..", "..##.", ".###.", ".####", "##.##", "#...#", ".###."};
 static const char *const diamond[3] = {".##.", "####", ".##."};
 
@@ -114,22 +112,16 @@ void hud_ctext(struct hud *h, const char *t, int y, int scale) {
     hud_text(h, t, (HUD_W - hud_text_w(t, scale)) / 2, y, scale, true);
 }
 
-/* Battery row: label, flask (flame while charging), five 20% segments, number. */
+/* Battery as a health bar: label (flame while charging), framed bar, number. */
 void hud_gauge(struct hud *h, const char *label, int y, int pct, bool charging) {
     char t[4];
-    hud_text(h, label, 2, y + 2, 1, true);
     if (charging) {
-        hud_sprite(h, flame, 7, 7, y, 1, true, false);
+        hud_sprite(h, flame, 7, 1, y + 1, 1, true, false);
     } else {
-        hud_sprite(h, flask, 9, 6, y, 1, true, false);
+        hud_text(h, label, 2, y + 2, 1, true);
     }
-    for (int k = 0; k < 5; k++) {
-        if (pct >= k * 20 + 10) {
-            hud_rect(h, 15 + k * 8, y + 1, 7, 7, true);
-        } else {
-            hud_box(h, 15 + k * 8, y + 1, 7, 7, true);
-        }
-    }
+    hud_box(h, 8, y + 2, 46, 5, true);
+    hud_rect(h, 9, y + 3, (CLAMP(pct, 0, 100) * 44 + 50) / 100, 3, true);
     snprintf(t, sizeof(t), "%d", pct);
     hud_text(h, t, 66 - hud_text_w(t, 1), y + 2, 1, true);
 }
