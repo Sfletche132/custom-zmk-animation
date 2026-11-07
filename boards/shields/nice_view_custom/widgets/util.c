@@ -6,6 +6,7 @@
  */
 
 #include <ctype.h>
+#include <stdio.h>
 #include <string.h>
 #include <zephyr/kernel.h>
 #include "util.h"
@@ -31,11 +32,10 @@ static const char *const font[128] = {
     ['+'] = "... .#. ### .#. ...",
 };
 
-static const char *const heart[6] = {".##.##.", "#######", "#######",
-                                     ".#####.", "..###..", "...#..."};
-static const char *const heart_empty[6] = {".##.##.", "#..#..#", "#.....#",
-                                           ".#...#.", "..#.#..", "...#..."};
-const char *const hud_bolt[7] = {"...##", "..##.", ".##..", "#####", "..##.", ".##..", "##..."};
+static const char *const flask[9] = {"..###..", "..###..", "...#...", "..###..", ".#####.",
+                                     "#######", "#######", "#######", ".#####."};
+static const char *const flame[7] = {"..#..", "..##.", ".###.", ".####", "##.##", "#...#", ".###."};
+static const char *const diamond[3] = {".##.", "####", ".##."};
 
 void hud_create(struct zmk_widget_status *widget, lv_obj_t *parent) {
     widget->obj = lv_canvas_create(parent);
@@ -110,21 +110,40 @@ void hud_text(struct hud *h, const char *t, int x, int y, int scale, bool ink) {
     }
 }
 
-/* Five hearts, 20% each, half hearts in between. */
-void hud_hearts(struct hud *h, int x, int y, int pct) {
+void hud_ctext(struct hud *h, const char *t, int y, int scale) {
+    hud_text(h, t, (HUD_W - hud_text_w(t, scale)) / 2, y, scale, true);
+}
+
+/* Battery row: label, flask (flame while charging), five 20% segments, number. */
+void hud_gauge(struct hud *h, const char *label, int y, int pct, bool charging) {
+    char t[4];
+    hud_text(h, label, 2, y + 2, 1, true);
+    if (charging) {
+        hud_sprite(h, flame, 7, 7, y, 1, true, false);
+    } else {
+        hud_sprite(h, flask, 9, 6, y, 1, true, false);
+    }
     for (int k = 0; k < 5; k++) {
-        int f = CLAMP((pct - k * 20 + 5) / 10, 0, 2);
-        for (int r = 0; r < 6; r++) {
-            for (int c = 0; c < 7; c++) {
-                char on = f == 2   ? heart[r][c]
-                          : f == 1 ? (c <= 3 ? heart[r][c] : heart_empty[r][c])
-                                   : heart_empty[r][c];
-                if (on == '#') {
-                    hud_px(h, x + k * 8 + c, y + r, true);
-                }
-            }
+        if (pct >= k * 20 + 10) {
+            hud_rect(h, 15 + k * 8, y + 1, 7, 7, true);
+        } else {
+            hud_box(h, 15 + k * 8, y + 1, 7, 7, true);
         }
     }
+    snprintf(t, sizeof(t), "%d", pct);
+    hud_text(h, t, 66 - hud_text_w(t, 1), y + 2, 1, true);
+}
+
+/* Horizontal rule with a diamond in the middle and dots at the ends. */
+void hud_orn(struct hud *h, int y, int x0, int x1) {
+    for (int x = x0; x <= x1; x++) {
+        if (x < 30 || x > 37) {
+            hud_px(h, x, y, true);
+        }
+    }
+    hud_sprite(h, diamond, 3, 32, y - 1, 1, true, false);
+    hud_px(h, x0 - 2, y, true);
+    hud_px(h, x1 + 2, y, true);
 }
 
 void hud_dither(struct hud *h, int y0) {

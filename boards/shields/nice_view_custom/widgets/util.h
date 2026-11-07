@@ -73,7 +73,7 @@ void hud_sprite(struct hud *h, const char *const rows[], int nrows, int x, int y
                 bool ink, bool flip);
 int hud_text_w(const char *t, int scale);
 void hud_text(struct hud *h, const char *t, int x, int y, int scale, bool ink);
-void hud_hearts(struct hud *h, int x, int y, int pct);
+void hud_ctext(struct hud *h, const char *t, int y, int scale);
+void hud_gauge(struct hud *h, const char *label, int y, int pct, bool charging);
+void hud_orn(struct hud *h, int y, int x0, int x1);
 void hud_dither(struct hud *h, int y0);
-
-extern const char *const hud_bolt[7];

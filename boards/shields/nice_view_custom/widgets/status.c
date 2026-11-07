@@ -3,7 +3,8 @@
  * Copyright (c) 2025 The ZMK Contributors
  * SPDX-License-Identifier: MIT
  *
- * Left (central) HUD: link + profile slots, layer as the hero, HP for both halves.
+ * Left (central) HUD: bond state, rune-stone profiles, the layer in a gothic arch,
+ * and a flask gauge for each half.
  */
 
 #include <stdio.h>
@@ -50,20 +51,29 @@ static const char *const gear[16] = {
     "####..####..####", "####...##...####", "..###......###..", "...###....###...",
     "..############..", ".###.######.###.", "..#...####...#..", "......####......",
 };
-static const char *const bt_icon[9] = {"..#..", "..##.", "#.#.#", ".###.", "..#..",
-                                       ".###.", "#.#.#", "..##.", "..#.."};
-static const char *const usb_icon[9] = {"...#...", "..###..", "...#.#.", "#..#.#.", "#..##..",
-                                        ".#.#...", "..##...", "...#...", "..###.."};
+static const char *const rune[9] = {"....#....", "...###...", "..#####..", ".#######.", "#########",
+                                    ".#######.", "..#####..", "...###...", "....#...."};
+static const char *const rune_empty[9] = {"....#....", "...#.#...", "..#...#..", ".#.....#.", "#.......#",
+                                          ".#.....#.", "..#...#..", "...#.#...", "....#...."};
+static const char *const roman[] = {"I", "II", "III", "IV", "V", "VI", "VII", "VIII"};
 
-static void hp_row(struct hud *h, const char *label, int y, int pct, bool charging) {
-    char t[4];
-    hud_text(h, label, 2, y + 1, 1, true);
-    hud_hearts(h, 8, y, pct);
-    if (charging) {
-        hud_sprite(h, hud_bolt, 7, 49, y - 1, 1, true, false);
+/* Gothic arch curves: y for x = 2..33 (outer, r=38) and x = 4..33 (inner, r=36). Mirrored. */
+static const uint8_t arch_outer[] = {66, 57, 53, 51, 49, 47, 45, 44, 42, 41, 40, 39, 38, 37, 36, 35,
+                                     35, 34, 33, 33, 32, 32, 31, 31, 30, 30, 29, 29, 29, 29, 28, 28};
+static const uint8_t arch_inner[] = {66, 57, 54, 51, 49, 47, 46, 44, 43, 42, 41, 40, 39, 38, 37,
+                                     36, 36, 35, 34, 34, 33, 33, 32, 32, 32, 31, 31, 31, 30, 30};
+
+static void arch(struct hud *h, const uint8_t *ys, int n, int xs, int y1) {
+    for (int i = 0; i < n; i++) {
+        int x = xs + i, y = ys[i], prev = i ? ys[i - 1] : y;
+        for (int yy = MIN(y, prev); yy <= MAX(y, prev); yy++) {
+            hud_px(h, x, yy, true);
+            hud_px(h, 67 - x, yy, true);
+        }
     }
-    snprintf(t, sizeof(t), "%d", pct);
-    hud_text(h, t, 66 - hud_text_w(t, 1), y + 1, 1, true);
+    hud_rect(h, xs, 66, 1, y1 - 66, true);
+    hud_rect(h, 67 - xs, 66, 1, y1 - 66, true);
+    hud_rect(h, xs, y1, HUD_W - 2 * xs, 1, true);
 }
 
 static void draw(struct zmk_widget_status *widget) {
@@ -72,69 +82,54 @@ static void draw(struct zmk_widget_status *widget) {
     char buf[12];
     hud_begin(&h, widget);
 
-    // header band: transport + link state
+    // header: transport + bond state over an ornamental rule
     bool usb = s->selected_endpoint.transport == ZMK_TRANSPORT_USB;
-    hud_rect(&h, 0, 0, HUD_W, 11, true);
-    if (usb) {
-        hud_sprite(&h, usb_icon, 9, 2, 1, 1, false, false);
-        hud_text(&h, "USB", 11, 3, 1, false);
-    } else {
-        hud_sprite(&h, bt_icon, 9, 2, 1, 1, false, false);
-        hud_text(&h, "BLE", 9, 3, 1, false);
-    }
-    const char *st = usb                         ? "WIRE"
-                     : !s->active_profile_bonded ? "OPEN"
-                     : s->active_profile_connected ? "LINK"
-                                                   : "SRCH";
-    hud_text(&h, st, 66 - hud_text_w(st, 1), 3, 1, false);
+    hud_text(&h, usb ? "USB" : "BLE", 2, 2, 1, true);
+    const char *st = usb                           ? "WIRED"
+                     : !s->active_profile_bonded   ? "OPEN"
+                     : s->active_profile_connected ? "BOUND"
+                                                   : "SEEK";
+    hud_text(&h, st, 66 - hud_text_w(st, 1), 2, 1, true);
+    hud_orn(&h, 9, 2, 65);
 
-    // profile slots
+    // profiles as rune stones
     for (int k = 0; k < NICEVIEW_PROFILE_COUNT; k++) {
-        int x = 2 + k * 13, y = 13;
+        int x = 3 + k * 13, y = 13;
         snprintf(buf, sizeof(buf), "%d", k + 1);
         if (k == s->active_profile_index && !usb) {
-            hud_rect(&h, x, y, 11, 9, true);
-            hud_text(&h, buf, x + 4, y + 2, 1, false);
+            hud_sprite(&h, rune, 9, x, y, 1, true, false);
+            hud_text(&h, buf, x + 3, y + 2, 1, false);
         } else if (s->profiles_bonded[k]) {
-            hud_box(&h, x, y, 11, 9, true);
-            hud_text(&h, buf, x + 4, y + 2, 1, true);
+            hud_sprite(&h, rune_empty, 9, x, y, 1, true, false);
+            hud_text(&h, buf, x + 3, y + 2, 1, true);
         } else {
-            for (int i = 0; i < 11; i += 2) {
-                hud_px(&h, x + i, y, true);
-                hud_px(&h, x + i, y + 8, true);
-            }
-            for (int j = 0; j < 9; j += 2) {
-                hud_px(&h, x, y + j, true);
-                hud_px(&h, x + 10, y + j, true);
-            }
+            hud_px(&h, x + 4, y + 4, true);
         }
     }
 
-    // hero: RPG dialog frame with layer icon + name
-    hud_box(&h, 0, 26, 68, 92, true);
-    hud_box(&h, 2, 28, 64, 88, true);
-    hud_px(&h, 0, 26, false);
-    hud_px(&h, 67, 26, false);
-    hud_px(&h, 0, 117, false);
-    hud_px(&h, 67, 117, false);
+    // hero: gothic arch with layer icon, name and numeral
+    arch(&h, arch_outer, ARRAY_SIZE(arch_outer), 2, 117);
+    arch(&h, arch_inner, ARRAY_SIZE(arch_inner), 4, 115);
+    hud_rect(&h, 0, 64, 5, 2, true);
+    hud_rect(&h, 63, 64, 5, 2, true);
 
     // ponytail: icon picked by layer index, matches this keymap's default/lower/raise/adjust
     int idx = s->layer_index;
     switch (idx) {
     case 0:
-        hud_sprite(&h, house, 16, 18, 36, 2, true, false);
+        hud_sprite(&h, house, 16, 18, 40, 2, true, false);
         break;
     case 1:
-        hud_sprite(&h, arrow, 16, 18, 36, 2, true, true);
+        hud_sprite(&h, arrow, 16, 18, 40, 2, true, true);
         break;
     case 2:
-        hud_sprite(&h, arrow, 16, 18, 36, 2, true, false);
+        hud_sprite(&h, arrow, 16, 18, 40, 2, true, false);
         break;
     case 3:
-        hud_sprite(&h, gear, 16, 18, 36, 2, true, false);
+        hud_sprite(&h, gear, 16, 18, 40, 2, true, false);
         break;
     default:
-        hud_text(&h, "?", 28, 36, 6, true);
+        hud_text(&h, "?", 28, 40, 6, true);
     }
 
     if (s->layer_label && s->layer_label[0]) {
@@ -142,32 +137,21 @@ static void draw(struct zmk_widget_status *widget) {
     } else {
         snprintf(buf, 8, "L%d", idx);
     }
-    hud_text(&h, buf, (HUD_W - hud_text_w(buf, 2)) / 2, 76, 2, true);
-    snprintf(buf, sizeof(buf), "LAYER %d", idx);
-    hud_text(&h, buf, (HUD_W - hud_text_w(buf, 1)) / 2, 91, 1, true);
-    for (int x = 6; x < 62; x += 2) {
-        hud_px(&h, x, 100, true);
-    }
-    for (int k = 0; k < 4; k++) {
-        if (k == idx) {
-            hud_rect(&h, 19 + k * 8, 105, 5, 5, true);
-        } else {
-            hud_box(&h, 19 + k * 8, 105, 5, 5, true);
-        }
-    }
+    hud_ctext(&h, buf, 78, 2);
+    hud_orn(&h, 93, 12, 55);
+    hud_ctext(&h, idx < ARRAY_SIZE(roman) ? roman[idx] : "?", 98, 1);
+    hud_orn(&h, 108, 12, 55);
 
-    // HP: both halves
-    hp_row(&h, "L", 122, s->battery, s->charging);
-    hp_row(&h, "R", 132, s->peripheral_battery, false);
+    // a flask per half
+    hud_gauge(&h, "L", 122, s->battery, s->charging);
+    hud_gauge(&h, "R", 135, s->peripheral_battery, false);
 
-    // ground strip
-    hud_rect(&h, 0, 144, HUD_W, 1, true);
-    for (int x = 5; x < HUD_W; x += 14) {
-        hud_px(&h, x, 143, true);
-        hud_px(&h, x + 2, 142, true);
-        hud_px(&h, x + 3, 143, true);
-    }
-    hud_dither(&h, 146);
+    // footer ornament + embers
+    hud_orn(&h, 151, 6, 61);
+    hud_px(&h, 10, 156, true);
+    hud_px(&h, 22, 158, true);
+    hud_px(&h, 45, 157, true);
+    hud_px(&h, 57, 155, true);
 
     hud_end(&h);
 }
